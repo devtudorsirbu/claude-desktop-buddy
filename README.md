@@ -22,19 +22,30 @@ waiting, and lets you approve or deny right from the device.
 
 ## Hardware
 
-The firmware targets ESP32 with the Arduino framework. As written, it
-depends on the M5StickCPlus library for its display, IMU, and button
-drivers—so you'll need that board, or a fork that swaps those drivers for
-your own pin layout.
+This fork has two independent targets:
+
+- `sticks3` uses M5Unified and supports the full buddy UI, ASCII pets, GIF
+  characters and BLE transfers, settings, demos, stats, IMU behaviors, audio,
+  and permission decisions. Its clock uses time synced by Claude because the
+  StickS3 has no hardware RTC, and its power manager does not report battery
+  current.
+- `m5stickc-plus` keeps the original full firmware and M5StickCPlus drivers.
 
 ## Flashing
 
 Install
 [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/),
-then:
+then find the serial port with `pio device list` and upload the StickS3 build:
 
 ```bash
-pio run -t upload
+PORT=/dev/cu.usbmodem2101
+pio run -e sticks3 -t upload --upload-port "$PORT"
+```
+
+For an M5StickC Plus, select its separate target instead:
+
+```bash
+pio run -e m5stickc-plus -t upload --upload-port "$PORT"
 ```
 
 If you're starting from a previously-flashed device, wipe it first:
@@ -148,6 +159,7 @@ If you're iterating on a character and would rather skip the BLE round-trip,
 | `celebrate` | level up (every 50K tokens) | confetti, bouncing          |
 | `dizzy`     | you shook the stick         | spiral eyes, wobbling       |
 | `heart`     | approved in under 5s        | floating hearts             |
+The StickS3 has a limitation with its LED functionality; the original alert-LED option is marked unavailable on this board. Instead, the attention animation remains active on screen.
 
 ## Project layout
 

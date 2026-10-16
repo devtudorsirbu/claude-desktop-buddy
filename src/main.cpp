@@ -1,11 +1,11 @@
-#include <M5StickCPlus.h>
+#include "device_compat.h"
 #include <LittleFS.h>
 #include <stdarg.h>
 #include "ble_bridge.h"
 #include "data.h"
 #include "buddy.h"
 
-TFT_eSprite spr = TFT_eSprite(&M5.Lcd);
+TFT_eSprite spr = TFT_eSprite(&device::lcd());
 
 // Advertise as "Claude-XXXX" (last two BT MAC bytes) so multiple sticks
 // in one room are distinguishable in the desktop picker. Name persists in
@@ -90,16 +90,16 @@ uint32_t promptArrivedMs = 0;
 // Face-down = Z-axis dominant and negative. Debounced so a toss doesn't count.
 static bool isFaceDown() {
   float ax, ay, az;
-  M5.Imu.getAccelData(&ax, &ay, &az);
+  device::getAccelData(&ax, &ay, &az);
   return az < -0.7f && fabsf(ax) < 0.4f && fabsf(ay) < 0.4f;
 }
 
-static void applyBrightness() { M5.Axp.ScreenBreath(20 + brightLevel * 20); }
+static void applyBrightness() { device::screenBreath(20 + brightLevel * 20); }
 
 static void wake() {
   lastInteractMs = millis();
   if (screenOff) {
-    M5.Axp.SetLDO2(true);
+    device::setScreenPower(true);
     applyBrightness();
     screenOff = false;
     wakeTransitionUntil = millis() + 12000;
@@ -109,7 +109,7 @@ static void wake() {
 bool     responseSent = false;
 
 static void beep(uint16_t freq, uint16_t dur) {
-  if (settings().sound) M5.Beep.tone(freq, dur);
+  if (settings().sound) device::tone(freq, dur);
 }
 
 static void sendCmd(const char* json) {
@@ -139,7 +139,11 @@ const uint8_t MENU_N = 6;
 
 bool    settingsOpen = false;
 uint8_t settingsSel  = 0;
+#if DEVICE_HAS_ALERT_LED
 const char* settingsItems[] = { "brightness", "sound", "bluetooth", "wifi", "led", "transcript", "clock rot", "ascii pet", "reset", "back" };
+#else
+const char* settingsItems[] = { "brightness", "sound", "bluetooth", "wifi", "led n/a", "transcript", "clock rot", "ascii pet", "reset", "back" };
+#endif
 const uint8_t SETTINGS_N = 10;
 
 bool    resetOpen = false;
@@ -165,7 +169,13 @@ static void applySetting(uint8_t idx) {
       s.bt = !s.bt;
       break;
     case 3: s.wifi = !s.wifi; break;   // stored only — no WiFi stack linked
-    case 4: s.led = !s.led; break;
+        case 4:
+    #if DEVICE_HAS_ALERT_LED
+      s.led = !s.led;
+      break;
+    #else
+      return;
+    #endif
     case 5: s.hud = !s.hud; break;
     case 6: s.clockRot = (s.clockRot + 1) % 3; break;
     case 7: nextPet(); return;
@@ -267,6 +277,8 @@ static void drawSettings() {
     spr.setTextColor(p.textDim, PANEL);
     if (i == 0) {
       spr.printf("%u/4", brightLevel);
+    } else if (i == 4 && !DEVICE_HAS_ALERT_LED) {
+      spr.print("n/a");
     } else if (i >= 1 && i <= 5) {
       spr.setTextColor(vals[i-1] ? GREEN : p.textDim, PANEL);
       spr.print(vals[i-1] ? " on" : "off");
@@ -305,7 +317,7 @@ static void drawReset() {
 void menuConfirm() {
   switch (menuSel) {
     case 0: settingsOpen = true; menuOpen = false; settingsSel = 0; break;
-    case 1: M5.Axp.PowerOff(); break;
+    case 1: device::powerOff(); break;
     case 2:
     case 3:
       menuOpen = false;
@@ -356,14 +368,14 @@ static bool            _onUsb       = false;
 static void clockRefreshRtc() {
   if (millis() - _clkLastRead < 1000) return;
   _clkLastRead = millis();
-  _onUsb = M5.Axp.GetVBusVoltage() > 4.0f;
-  M5.Rtc.GetTime(&_clkTm);
-  M5.Rtc.GetDate(&_clkDt);
+  _onUsb = device::vbusVoltage() > 4.0f;
+  device::getRtcTime(&_clkTm);
+  device::getRtcDate(&_clkDt);
 }
 
 static void clockUpdateOrient() {
   float ax, ay, az;
-  M5.Imu.getAccelData(&ax, &ay, &az);
+  device::getAccelData(&ax, &ay, &az);
   uint8_t lock = settings().clockRot;
   if (lock == 1) { clockOrient = 0; return; }
   if (lock == 2) {
@@ -491,7 +503,7 @@ void triggerOneShot(PersonaState s, uint32_t durMs) {
 
 bool checkShake() {
   float ax, ay, az;
-  M5.Imu.getAccelData(&ax, &ay, &az);
+  device::getAccelData(&ax, &ay, &az);
   float mag = sqrtf(ax*ax + ay*ay + az*az);
   float delta = fabsf(mag - accelBaseline);
   accelBaseline = accelBaseline * 0.95f + mag * 0.05f;
@@ -593,14 +605,14 @@ void drawInfo() {
   } else if (infoPage == 3) {
     _infoHeader(p, y, "DEVICE", infoPage);
 
-    int vBat_mV = (int)(M5.Axp.GetBatVoltage() * 1000);
-    int iBat_mA = (int)M5.Axp.GetBatCurrent();
-    int vBus_mV = (int)(M5.Axp.GetVBusVoltage() * 1000);
+    int vBat_mV = (int)(device::batteryVoltage() * 1000);
+    int iBat_mA = device::batteryCurrent();
+    int vBus_mV = (int)(device::vbusVoltage() * 1000);
     int pct = (vBat_mV - 3200) / 10;   // (v-3.2)/(4.2-3.2)*100 = (v-3.2)*100 = (mv-3200)/10
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
     bool usb = vBus_mV > 4000;
-    bool charging = usb && iBat_mA > 1;
-    bool full = usb && vBat_mV > 4100 && iBat_mA < 10;
+    bool charging = usb && device::isCharging();
+    bool full = usb && vBat_mV > 4100 && !charging;
 
     spr.setTextColor(p.text, p.bg);
     spr.setTextSize(2);
@@ -614,7 +626,9 @@ void drawInfo() {
 
     spr.setTextColor(p.textDim, p.bg);
     ln("  battery  %d.%02dV", vBat_mV/1000, (vBat_mV%1000)/10);
+  #if DEVICE_HAS_BATTERY_CURRENT
     ln("  current  %+dmA", iBat_mA);
+  #endif
     if (usb) ln("  usb in   %d.%02dV", vBus_mV/1000, (vBus_mV%1000)/10);
     y += 8;
 
@@ -627,7 +641,9 @@ void drawInfo() {
     ln("  heap     %uKB", ESP.getFreeHeap() / 1024);
     ln("  bright   %u/4", brightLevel);
     ln("  bt       %s", settings().bt ? (dataBtActive() ? "linked" : "on") : "off");
-    ln("  temp     %dC", (int)M5.Axp.GetTempInAXP192());
+    float temperature = device::temperatureC();
+    if (isfinite(temperature)) ln("  temp     %dC", (int)temperature);
+    else ln("  temp     n/a");
 
   } else if (infoPage == 4) {
     _infoHeader(p, y, "BLUETOOTH", infoPage);
@@ -936,13 +952,12 @@ void drawHUD() {
 }
 
 void setup() {
-  M5.begin();
+  device::begin();
   M5.Lcd.setRotation(0);
-  M5.Imu.Init();
-  M5.Beep.begin();
+  device::initImu();
+  device::beginAudio();
   startBt();
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);   // off
+  device::initAlertLed(LED_PIN);
   applyBrightness();
   lastInteractMs = millis();
   statsLoad();
@@ -987,7 +1002,7 @@ void setup() {
 
 void loop() {
   M5.update();
-  M5.Beep.update();
+  device::updateAudio();
   t++;
   uint32_t now = millis();
 
@@ -1003,9 +1018,9 @@ void loop() {
 
   // LED: pulse on attention, otherwise off
   if (activeState == P_ATTENTION && settings().led) {
-    digitalWrite(LED_PIN, (now / 400) % 2 ? LOW : HIGH);
+    device::setAlertLed((now / 400) % 2 == 0);
   } else {
-    digitalWrite(LED_PIN, HIGH);
+    device::setAlertLed(false);
   }
 
   // shake → dizzy + force scenario advance
@@ -1053,11 +1068,11 @@ void loop() {
 
   // AXP power button (left side): short-press toggles screen off.
   // Long-press (6s) still powers off the device via AXP hardware.
-  if (M5.Axp.GetBtnPress() == 0x02) {
+  if (device::powerButtonPress() == 0x02) {
     if (screenOff) {
       wake();
     } else {
-      M5.Axp.SetLDO2(false);
+      device::setScreenPower(false);
       screenOff = true;
     }
   }
@@ -1243,7 +1258,7 @@ void loop() {
   if (!napping && faceDownFrames >= 15) {
     napping = true;
     napStartMs = now;
-    M5.Axp.ScreenBreath(8);
+    device::screenBreath(8);
     dimmed = true;
   } else if (napping && faceDownFrames <= -8) {
     napping = false;
@@ -1257,7 +1272,7 @@ void loop() {
   // No auto-off on USB power — clock face wants to stay visible while charging.
   if (!screenOff && !inPrompt && !_onUsb
       && millis() - lastInteractMs > SCREEN_OFF_MS) {
-    M5.Axp.SetLDO2(false);
+    device::setScreenPower(false);
     screenOff = true;
   }
 

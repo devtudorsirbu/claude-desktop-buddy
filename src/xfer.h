@@ -72,7 +72,7 @@ const char* petName();
 void ownerSet(const char* name);
 const char* ownerName();
 #include "stats.h"
-#include <M5StickCPlus.h>
+#include "device_compat.h"
 
 inline bool xferCommand(JsonDocument& doc) {
   const char* cmd = doc["cmd"];
@@ -112,21 +112,29 @@ inline bool xferCommand(JsonDocument& doc) {
   if (strcmp(cmd, "status") == 0) {
     // Dump everything the info screens show. Manual printf rather than
     // ArduinoJson serialize — less heap churn, and the shape is fixed.
-    int vBat = (int)(M5.Axp.GetBatVoltage() * 1000);
-    int iBat = (int)M5.Axp.GetBatCurrent();
-    int vBus = (int)(M5.Axp.GetVBusVoltage() * 1000);
+    int vBat = (int)(device::batteryVoltage() * 1000);
+    int iBat = device::batteryCurrent();
+    int vBus = (int)(device::vbusVoltage() * 1000);
     int pct = (vBat - 3200) / 10;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
     char b[320];
     int len = snprintf(b, sizeof(b),
       "{\"ack\":\"status\",\"ok\":true,\"n\":0,\"data\":{"
       "\"name\":\"%s\",\"owner\":\"%s\",\"sec\":%s,"
+    #if DEVICE_HAS_BATTERY_CURRENT
       "\"bat\":{\"pct\":%d,\"mV\":%d,\"mA\":%d,\"usb\":%s},"
+    #else
+      "\"bat\":{\"pct\":%d,\"mV\":%d,\"usb\":%s},"
+    #endif
       "\"sys\":{\"up\":%lu,\"heap\":%u,\"fsFree\":%lu,\"fsTotal\":%lu},"
       "\"stats\":{\"appr\":%u,\"deny\":%u,\"vel\":%u,\"nap\":%lu,\"lvl\":%u}"
       "}}\n",
       petName(), ownerName(), bleSecure() ? "true" : "false",
+    #if DEVICE_HAS_BATTERY_CURRENT
       pct, vBat, iBat, (vBus > 4000) ? "true" : "false",
+    #else
+      pct, vBat, (vBus > 4000) ? "true" : "false",
+    #endif
       millis() / 1000, ESP.getFreeHeap(),
       (unsigned long)(LittleFS.totalBytes() - LittleFS.usedBytes()),
       (unsigned long)LittleFS.totalBytes(),
