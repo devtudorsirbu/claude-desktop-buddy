@@ -23,7 +23,7 @@ struct RTC_DateTypeDef {
 };
 
 #define DEVICE_HAS_BATTERY_CURRENT 0
-#define DEVICE_HAS_ALERT_LED 0
+#define DEVICE_HAS_ALERT_LED 1
 #else
 #include <M5StickCPlus.h>
 #define DEVICE_HAS_BATTERY_CURRENT 1
@@ -35,10 +35,13 @@ namespace device {
 inline lgfx::LGFX_Device& lcd() { return M5.Display; }
 
 inline void begin() {
+  Serial.setRxBufferSize(4096);
+  Serial.setTxTimeoutMs(0);
   Serial.begin(115200);
   auto config = M5.config();
   config.fallback_board = m5::board_t::board_M5StickS3;
   config.internal_rtc = false;
+  config.output_power = false;
   M5.begin(config);
 }
 
@@ -82,8 +85,20 @@ inline void setScreenPower(bool enabled) {
 inline void beginAudio() { M5.Speaker.begin(); }
 inline void updateAudio() {}
 inline void tone(uint16_t frequency, uint16_t duration) { M5.Speaker.tone(frequency, duration); }
-inline void initAlertLed(int) { M5.Power.setLed(0); }
-inline void setAlertLed(bool enabled) { M5.Power.setLed(enabled ? 255 : 0); }
+inline bool& alertLedState() {
+  static bool value = false;
+  return value;
+}
+
+inline void initAlertLed(int) {
+  alertLedState() = false;
+  M5.Power.M5pm1.setLedEnLevel(false);
+}
+
+inline void setAlertLed(bool enabled) {
+  if (enabled == alertLedState()) return;
+  if (M5.Power.M5pm1.setLedEnLevel(enabled)) alertLedState() = enabled;
+}
 
 inline RTC_TimeTypeDef& pendingRtcTime() {
   static RTC_TimeTypeDef value{};

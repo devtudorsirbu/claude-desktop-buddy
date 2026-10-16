@@ -5,6 +5,7 @@
 #include <BLESecurity.h>
 #include <BLE2902.h>
 #include <Arduino.h>
+#include <atomic>
 #include <string.h>
 
 // Nordic UART Service UUIDs — every BLE serial example uses these, so
@@ -17,10 +18,11 @@
 // Incoming bytes are buffered in a simple ring for bleRead()/bleAvailable().
 // Sized to hold a transcript snapshot JSON plus headroom; the GATT layer
 // will flow-control if we fall behind.
-static const size_t RX_CAP = 2048;
+static const size_t RX_CAP = 8192;
 static uint8_t  rxBuf[RX_CAP];
 static volatile size_t rxHead = 0;
 static volatile size_t rxTail = 0;
+static std::atomic<uint32_t> rxDroppedBytes{0};
 
 static BLEServer*         server = nullptr;
 static BLECharacteristic* txChar = nullptr;
@@ -33,7 +35,10 @@ static volatile uint16_t  mtu = 23;
 static void rxPush(const uint8_t* p, size_t n) {
   for (size_t i = 0; i < n; i++) {
     size_t next = (rxHead + 1) % RX_CAP;
-    if (next == rxTail) return;  // full — drop (upstream should keep up)
+    if (next == rxTail) {
+      rxDroppedBytes.fetch_add(n - i, std::memory_order_relaxed);
+      return;
+    }
     rxBuf[rxHead] = p[i];
     rxHead = next;
   }
@@ -151,6 +156,8 @@ void bleClearBonds() {
 size_t bleAvailable() {
   return (rxHead + RX_CAP - rxTail) % RX_CAP;
 }
+
+uint32_t bleRxDropped() { return rxDroppedBytes.load(std::memory_order_relaxed); }
 
 int bleRead() {
   if (rxHead == rxTail) return -1;

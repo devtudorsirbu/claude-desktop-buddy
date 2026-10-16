@@ -704,37 +704,67 @@ void drawInfo() {
 }
 
 
-// Greedy word-wrap into fixed-width rows. Continuation rows get a leading
-// space. Returns number of rows written.
-static uint8_t wrapInto(const char* in, char out[][24], uint8_t maxRows, uint8_t width) {
-  uint8_t row = 0, col = 0;
-  const char* p = in;
-  while (*p && row < maxRows) {
-    while (*p == ' ') p++;                     // skip leading spaces
-    // measure next word
-    const char* w = p;
-    while (*p && *p != ' ') p++;
-    uint8_t wlen = p - w;
-    if (wlen == 0) break;
-    uint8_t need = (col > 0 ? 1 : 0) + wlen;
-    if (col + need > width) {
-      out[row][col] = 0;
-      if (++row >= maxRows) return row;
-      out[row][0] = ' '; col = 1;              // continuation indent
+// Wrap by display cells while preserving UTF-8 character boundaries.
+static uint8_t wrapInto(const char* input, char output[][64], uint8_t maxRows, uint8_t width) {
+  if (maxRows == 0 || width == 0) return 0;
+
+  uint8_t row = 0;
+  size_t byteColumn = 0;
+  uint8_t cellColumn = 0;
+  const char* cursor = input;
+
+  while (*cursor && row < maxRows) {
+    while (*cursor == ' ') cursor++;
+    if (!*cursor) break;
+
+    const char* word = cursor;
+    size_t wordBytes = 0;
+    uint16_t wordCells = 0;
+    while (cursor[wordBytes] && cursor[wordBytes] != ' ') {
+      const size_t remaining = strlen(cursor + wordBytes);
+      size_t charBytes = _utf8Width(cursor + wordBytes, remaining);
+      if (charBytes == 0 || charBytes > remaining) charBytes = 1;
+      wordBytes += charBytes;
+      wordCells += charBytes == 1 ? 1 : 2;
     }
-    if (col > 1 || (col == 1 && out[row][0] != ' ')) out[row][col++] = ' ';
-    else if (col == 1 && row > 0) {}           // already have the indent space
-    // hard-break words that still don't fit
-    while (wlen > width - col) {
-      uint8_t take = width - col;
-      memcpy(&out[row][col], w, take); col += take; w += take; wlen -= take;
-      out[row][col] = 0;
+    cursor += wordBytes;
+
+    const bool indentOnly = row > 0 && cellColumn == 1;
+    const uint8_t separator = cellColumn > 0 && !indentOnly ? 1 : 0;
+    if (cellColumn + separator + wordCells > width) {
+      output[row][byteColumn] = '\0';
       if (++row >= maxRows) return row;
-      out[row][0] = ' '; col = 1;
+      output[row][0] = ' ';
+      byteColumn = 1;
+      cellColumn = 1;
+    } else if (separator) {
+      output[row][byteColumn++] = ' ';
+      cellColumn++;
     }
-    memcpy(&out[row][col], w, wlen); col += wlen;
+
+    size_t offset = 0;
+    while (offset < wordBytes) {
+      size_t charBytes = _utf8Width(word + offset, wordBytes - offset);
+      if (charBytes == 0 || charBytes > wordBytes - offset) charBytes = 1;
+      const uint8_t charCells = charBytes == 1 ? 1 : 2;
+      if (cellColumn + charCells > width) {
+        output[row][byteColumn] = '\0';
+        if (++row >= maxRows) return row;
+        output[row][0] = ' ';
+        byteColumn = 1;
+        cellColumn = 1;
+      }
+      memcpy(output[row] + byteColumn, word + offset, charBytes);
+      byteColumn += charBytes;
+      cellColumn += charCells;
+      offset += charBytes;
+    }
   }
-  if (col > 0 && row < maxRows) { out[row][col] = 0; row++; }
+
+  if (byteColumn > 0 && row < maxRows) {
+    output[row][byteColumn] = '\0';
+    row++;
+  }
   return row;
 }
 
@@ -761,12 +791,15 @@ static void drawApproval() {
 
   // Hint wraps at ~21 chars to two lines under the tool name
   spr.setTextColor(p.textDim, p.bg);
-  int hlen = strlen(tama.promptHint);
+  const size_t hintLength = strlen(tama.promptHint);
+  const size_t firstLength = _utf8PrefixBytes(tama.promptHint, 21);
   spr.setCursor(4, H - AREA + 34);
-  spr.printf("%.21s", tama.promptHint);
-  if (hlen > 21) {
+  spr.printf("%.*s", static_cast<int>(firstLength), tama.promptHint);
+  if (firstLength < hintLength) {
+    const char* secondLine = tama.promptHint + firstLength;
+    const size_t secondLength = _utf8PrefixBytes(secondLine, 21);
     spr.setCursor(4, H - AREA + 42);
-    spr.printf("%.21s", tama.promptHint + 21);
+    spr.printf("%.*s", static_cast<int>(secondLength), secondLine);
   }
 
   if (responseSent) {
@@ -906,10 +939,18 @@ void drawPet() {
 void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
-  const int SHOW = 3, LH = 8, WIDTH = 21;
+  const int SHOW = 3, WIDTH = 21;
+#if defined(ESP32S3)
+  const int LH = 12;
+#else
+  const int LH = 8;
+#endif
   const int AREA = SHOW * LH + 4;
   spr.fillRect(0, H - AREA, W, AREA, p.bg);
   spr.setTextSize(1);
+#if defined(ESP32S3)
+  spr.setFont(&fonts::efontCN_12);
+#endif
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
 
@@ -917,12 +958,15 @@ void drawHUD() {
     spr.setTextColor(p.text, p.bg);
     spr.setCursor(4, H - LH - 2);
     spr.print(tama.msg);
+#if defined(ESP32S3)
+    spr.setFont(nullptr);
+#endif
     return;
   }
 
   // Wrap all transcript lines into a flat display buffer. Track which
   // transcript index each display row came from, so we can dim older ones.
-  static char disp[32][24];
+  static char disp[32][64];
   static uint8_t srcOf[32];
   uint8_t nDisp = 0;
   for (uint8_t i = 0; i < tama.nLines && nDisp < 32; i++) {
@@ -944,6 +988,9 @@ void drawHUD() {
     spr.setCursor(4, H - AREA + 2 + i * LH);
     spr.print(disp[row]);
   }
+#if defined(ESP32S3)
+  spr.setFont(nullptr);
+#endif
   if (msgScroll > 0) {
     spr.setTextColor(p.body, p.bg);
     spr.setCursor(W - 18, H - LH - 2);

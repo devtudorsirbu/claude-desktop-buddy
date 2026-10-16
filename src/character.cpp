@@ -141,8 +141,15 @@ bool characterInit(const char* name) {
   if (!LittleFS.begin(false)) {
     // begin() fails if already mounted — that's fine on reload
     if (!LittleFS.open("/")) {
+#if defined(ESP32S3)
+      if (!LittleFS.begin(true)) {
+        Serial.println("[char] LittleFS format/mount failed");
+        return false;
+      }
+#else
       Serial.println("[char] LittleFS mount failed");
       return false;
+#endif
     }
   }
 

@@ -28,5 +28,6 @@ uint32_t blePasskey();
 // and from factory reset.
 void bleClearBonds();
 size_t bleAvailable();
+uint32_t bleRxDropped();
 int bleRead();
 size_t bleWrite(const uint8_t* data, size_t len);

@@ -28,7 +28,10 @@ This fork has two independent targets:
   characters and BLE transfers, settings, demos, stats, IMU behaviors, audio,
   and permission decisions. Its clock uses time synced by Claude because the
   StickS3 has no hardware RTC, and its power manager does not report battery
-  current.
+  current. It also uses the M5PM1 LED rail for attention alerts and formats a
+  fresh LittleFS partition only if mounting fails. USB and BLE snapshots use
+  bounded 4 KB line buffers, an 8 KB BLE receive ring, and UTF-8-safe display
+  handling; oversized snapshots are dropped instead of partially parsed.
 - `m5stickc-plus` keeps the original full firmware and M5StickCPlus drivers.
 
 ## Flashing
@@ -159,7 +162,9 @@ If you're iterating on a character and would rather skip the BLE round-trip,
 | `celebrate` | level up (every 50K tokens) | confetti, bouncing          |
 | `dizzy`     | you shook the stick         | spiral eyes, wobbling       |
 | `heart`     | approved in under 5s        | floating hearts             |
-The StickS3 has a limitation with its LED functionality; the original alert-LED option is marked unavailable on this board. Instead, the attention animation remains active on screen.
+
+StickS3 USB and BLE input is bounded and oversized snapshots are dropped with
+a diagnostic rather than parsed partially.
 
 ## Project layout
 
