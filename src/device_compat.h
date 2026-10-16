@@ -36,7 +36,9 @@ inline lgfx::LGFX_Device& lcd() { return M5.Display; }
 
 inline void begin() {
   Serial.setRxBufferSize(4096);
-  Serial.setTxTimeoutMs(0);
+  // Not 0: HWCDC's retry counter underflows and a full TX buffer would block
+  // forever. A few ms lets it notice an unread port and drop output instead.
+  Serial.setTxTimeoutMs(5);
   Serial.begin(115200);
   auto config = M5.config();
   config.fallback_board = m5::board_t::board_M5StickS3;

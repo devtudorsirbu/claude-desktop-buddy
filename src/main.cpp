@@ -704,6 +704,13 @@ void drawInfo() {
 }
 
 
+// M5GFX draws code points below U+0100 half-width and the rest full-width,
+// so ASCII and Latin-1 (lead byte 0xC2/0xC3) take one cell, all else two.
+static uint8_t utf8Cells(const char* text, size_t charBytes) {
+  const unsigned char lead = static_cast<unsigned char>(text[0]);
+  return charBytes == 1 || (charBytes == 2 && lead <= 0xC3) ? 1 : 2;
+}
+
 // Wrap by display cells while preserving UTF-8 character boundaries.
 static uint8_t wrapInto(const char* input, char output[][64], uint8_t maxRows, uint8_t width) {
   if (maxRows == 0 || width == 0) return 0;
@@ -724,14 +731,17 @@ static uint8_t wrapInto(const char* input, char output[][64], uint8_t maxRows, u
       const size_t remaining = strlen(cursor + wordBytes);
       size_t charBytes = _utf8Width(cursor + wordBytes, remaining);
       if (charBytes == 0 || charBytes > remaining) charBytes = 1;
+      wordCells += utf8Cells(cursor + wordBytes, charBytes);
       wordBytes += charBytes;
-      wordCells += charBytes == 1 ? 1 : 2;
     }
     cursor += wordBytes;
 
     const bool indentOnly = row > 0 && cellColumn == 1;
-    const uint8_t separator = cellColumn > 0 && !indentOnly ? 1 : 0;
-    if (cellColumn + separator + wordCells > width) {
+    const bool rowEmpty = cellColumn == 0 || indentOnly;
+    const uint8_t separator = rowEmpty ? 0 : 1;
+    // Only start a new row if this one has content; a word too long for an
+    // empty row is hard-broken below rather than leaving the row blank.
+    if (!rowEmpty && cellColumn + separator + wordCells > width) {
       output[row][byteColumn] = '\0';
       if (++row >= maxRows) return row;
       output[row][0] = ' ';
@@ -746,7 +756,7 @@ static uint8_t wrapInto(const char* input, char output[][64], uint8_t maxRows, u
     while (offset < wordBytes) {
       size_t charBytes = _utf8Width(word + offset, wordBytes - offset);
       if (charBytes == 0 || charBytes > wordBytes - offset) charBytes = 1;
-      const uint8_t charCells = charBytes == 1 ? 1 : 2;
+      const uint8_t charCells = utf8Cells(word + offset, charBytes);
       if (cellColumn + charCells > width) {
         output[row][byteColumn] = '\0';
         if (++row >= maxRows) return row;
@@ -789,18 +799,23 @@ static void drawApproval() {
   spr.print(tama.promptTool);
   spr.setTextSize(1);
 
-  // Hint wraps at ~21 chars to two lines under the tool name
+  // Hint word-wraps to two rows under the tool name, like the transcript
   spr.setTextColor(p.textDim, p.bg);
-  const size_t hintLength = strlen(tama.promptHint);
-  const size_t firstLength = _utf8PrefixBytes(tama.promptHint, 21);
-  spr.setCursor(4, H - AREA + 34);
-  spr.printf("%.*s", static_cast<int>(firstLength), tama.promptHint);
-  if (firstLength < hintLength) {
-    const char* secondLine = tama.promptHint + firstLength;
-    const size_t secondLength = _utf8PrefixBytes(secondLine, 21);
-    spr.setCursor(4, H - AREA + 42);
-    spr.printf("%.*s", static_cast<int>(secondLength), secondLine);
+#if defined(ESP32S3)
+  const int HINT_LH = 12;
+  spr.setFont(&fonts::efontCN_12);
+#else
+  const int HINT_LH = 8;
+#endif
+  static char hintRows[2][64];
+  const uint8_t hintRowCount = wrapInto(tama.promptHint, hintRows, 2, 21);
+  for (uint8_t i = 0; i < hintRowCount; i++) {
+    spr.setCursor(4, H - AREA + 34 + i * HINT_LH);
+    spr.print(hintRows[i]);
   }
+#if defined(ESP32S3)
+  spr.setFont(nullptr);
+#endif
 
   if (responseSent) {
     spr.setTextColor(p.textDim, p.bg);

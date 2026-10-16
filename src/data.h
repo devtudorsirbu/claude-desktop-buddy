@@ -64,18 +64,6 @@ static void _copyUtf8(char (&destination)[N], const char* source) {
   destination[destinationOffset] = '\0';
 }
 
-static size_t _utf8PrefixBytes(const char* text, size_t maxBytes) {
-  const size_t length = strlen(text);
-  size_t offset = 0;
-  while (offset < length && offset < maxBytes) {
-    const size_t width = _utf8Width(text + offset, length - offset);
-    if (width == 0) { offset++; continue; }
-    if (width > length - offset || offset + width > maxBytes) break;
-    offset += width;
-  }
-  return offset;
-}
-
 // ---------------------------------------------------------------------------
 // Three modes, checked in priority order:
 //   demo   → auto-cycle fake scenarios every 8s, ignore live data
